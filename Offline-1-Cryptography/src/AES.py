@@ -1,6 +1,8 @@
 
 from BitVector import *
-import codecs
+import math
+import random 
+import time
 Sbox = (
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
     0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
@@ -60,15 +62,14 @@ numOfRounds = {
     192: 12,
     256: 14
 }
-AES_key_size = 128
+AES_mode = 128
 roundKeys = []
 
 # ======================== DEBUGGING ========================
 def printHexArray(array):
-    print("[", end="")
     for i in array:
         print(i.get_hex_string_from_bitvector(), end=" ")
-    print("]")
+    print("")
 
 def printHexMatrix(matrix):
     for i in matrix:
@@ -117,6 +118,16 @@ def columnMatrixToArray(matrix):
         for j in range(4):
             hexArray.append(matrix[j][i])
     return hexArray
+
+def arrayXor(array1, array2):
+    newArray = []
+    for i in range(len(array1)):
+        newArray.append(array1[i] ^ array2[i])
+    return newArray
+
+def xor_strings(str1, str2):
+    xored = ''.join(chr(ord(a) ^ ord(b)) for a, b in zip(str1, str2))
+    return xored
 
 # ======================== AES ops ========================
 def matrixXor(matrix1, matrix2):
@@ -177,7 +188,7 @@ def keygen(key):
     rc2 = BitVector(intVal=2, size=8)
     rc11B = BitVector(intVal=0x11B, size=9)
 
-    requiredWords = numOfRounds[len(key) * 8] * 4 + 4
+    requiredWords = numOfRounds[AES_mode] * 4 + 4
     for i in range(nk, requiredWords):
         g = words[i-1]
 
@@ -193,7 +204,7 @@ def keygen(key):
 
         words.append(arrayXor(words[i-nk], g))
         
-
+    roundKeys.clear()
     for i in range(0, len(words), 4):
         word = words[i] + words[i+1] + words[i+2] + words[i+3]
         roundKeys.append(arrayToColumnMatrix(word))
@@ -208,7 +219,7 @@ def aes_encrypt_block(plaintext):
     state = matrixXor(state, roundKeys[0])
 
     # middle rounds
-    for i in range(1, numOfRounds[AES_key_size]):
+    for i in range(1, numOfRounds[AES_mode]):
         state = matrixSubstitute(state)
         state = shiftRows(state)
         state = mixColumn(state)
@@ -249,18 +260,117 @@ def aes_decrypt_block(ciphertext):
     
     decryptedHexArray = columnMatrixToArray(state)
     decryptedText = hex2Text(decryptedHexArray)
-    print(decryptedText)
+    return decryptedText
 
 
+def aes_encrypt(key, plaintext, mode=128):
+    AES_key_size = mode
+    key = key.ljust(AES_key_size//8, "\0")
+    plaintext = plaintext.ljust(math.ceil(len(plaintext)/16)*16, "\0")
+    
+    start_time = time.time()
+    # generate key
+    keygen(key)
+    keyScheduleTime = time.time() - start_time
 
-key = "Thats my Kung Fu"
-text = "Two One Nine Two"
-keygen(key)
-encrypted_text = aes_encrypt_block(text)
-print(encrypted_text)
-aes_decrypt_block(encrypted_text)
+    start_time = time.time()
+    # CBC
+    randomIV = BitVector(intVal = 0)
+    randomIV = randomIV.gen_random_bits(128)
+    IVText = randomIV.get_bitvector_in_ascii()
+    
+    # encrypt
+    encryptedText = aes_encrypt_block(IVText)
+    encryptedBlock = encryptedText[:16]
+    for i in range(0, len(plaintext), 16):
+        block = plaintext[i:i+16]
+        block = xor_strings(block, encryptedBlock)
+        encryptedBlock = aes_encrypt_block(block)
+        encryptedText += encryptedBlock
+
+    encryptionTime = time.time() - start_time
+    return plaintext, encryptedText, encryptionTime, keyScheduleTime
 
 
+def aes_decrypt(key, ciphertext, mode=128):
+    AES_key_size = mode
+    key = key.ljust(AES_key_size//8, "\0")
+    ciphertext = ciphertext.ljust(math.ceil(len(ciphertext)/16)*16, "\0")
+
+    start_time = time.time()
+    # generate key
+    keygen(key)
+    keyScheduleTime = time.time() - start_time
+    
+    start_time = time.time()
+    # decrypt
+    decryptedText = ""
+    prevBlock = ciphertext[:16]
+    for i in range(16, len(ciphertext), 16):
+        block = ciphertext[i:i+16]
+        decryptedBlock = aes_decrypt_block(block)
+        decryptedText += xor_strings(prevBlock, decryptedBlock)
+        prevBlock = block
+    
+    decryptionTime = time.time() - start_time
+    
+    return decryptedText, decryptionTime
+
+def main():
+    
+    mode = 128
+    # random.seed(time.time())
+    
+    # take command line arguments
+    if len(sys.argv) > 1:
+        if not sys.argv[1].isdigit():
+            print("Mode must be a number")
+            return
+        mode = int(sys.argv[1])
+
+    # take input the key
+    # key = input("Enter the key: ")
+    # plaintext = input("Enter the plaintext: ")
+    # print("")
+
+    key = "BUET CSE19 Batch"
+    plaintext = "Never Gonna Give You Up"
+
+    paddedPlaintext, ciphertext, encyptionTime, keyScheduleTime = aes_encrypt(key, plaintext, mode)
+    decryptedText, decryptionTime = aes_decrypt(key, ciphertext, mode)
+    
+    print("Key:")
+    print("In ASCII :", key)
+    print("In HEX: ", end="")
+    printHexArray(text2Hex(key))
+    print()
+
+    print("Plain Text:")
+    print("In ASCII :", paddedPlaintext)
+    print("In HEX: ", end="")
+    printHexArray(text2Hex(paddedPlaintext))
+    print()
+
+    print("Ciphered Text:")
+    print("In HEX: ", end="")
+    printHexArray(text2Hex(ciphertext))
+    print("In ASCII :", ciphertext)
+    print()
+
+    print("Deciphered Text:")
+    print("In HEX: ", end="")
+    printHexArray(text2Hex(decryptedText))
+    print("In ASCII :", decryptedText)
+    print()
+
+    print("Execution Time Details:")
+    print("Key Schedule Time:", keyScheduleTime*1000, "ms")
+    print("Encryption Time:", encyptionTime*1000, "ms")
+    print("Decryption Time:", decryptionTime*1000, "ms")
+    
+    
+main()
+    
 
 
 
