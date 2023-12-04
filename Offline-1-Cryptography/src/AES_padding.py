@@ -1,6 +1,5 @@
 
 from BitVector import *
-import math
 import time
 Sbox = (
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
@@ -250,8 +249,9 @@ def keygen(key):
         word = words[i] + words[i+1] + words[i+2] + words[i+3]
         roundKeys.append(arrayToColumnMatrix(word))
 
-def aes_encrypt_block(plaintext):
-    hexArray = text2Hex(plaintext)
+
+def aes_encrypt_block(hexArray):
+    # hexArray = text2Hex(plaintext)
     state = arrayToColumnMatrix(hexArray)
     
     # intial round
@@ -273,11 +273,10 @@ def aes_encrypt_block(plaintext):
     
     encryptedHexArray = columnMatrixToArray(state)
     encryptedText = hex2Text(encryptedHexArray)
-    return encryptedText
+    return encryptedHexArray
 
 def aes_decrypt_block(ciphertext):
-    hexArray = text2Hex(ciphertext)
-    state = arrayToColumnMatrix(hexArray)
+    state = arrayToColumnMatrix(ciphertext)
 
     invRoundKeys = roundKeys[:]
     invRoundKeys.reverse()
@@ -295,79 +294,90 @@ def aes_decrypt_block(ciphertext):
     state = matrixSubstitute(state, InvSbox)
     state = matrixXor(state, invRoundKeys[-1])
 
-        
-    
     decryptedHexArray = columnMatrixToArray(state)
-    decryptedText = hex2Text(decryptedHexArray)
-    return decryptedText
+    return decryptedHexArray
+
 
 def aes_encrypt(key, plaintext, mode=128):
+    
     AES_key_size = mode
-    plaintext = plaintext.ljust(math.ceil(len(plaintext)/16)*16, "\0")
     
     start_time = time.time()
-    # generate key
     keygen(key)
     keyScheduleTime = time.time() - start_time
-
+    
     start_time = time.time()
+    
+    hexArray = []
+    if type(plaintext) == str:
+        hexArray = text2Hex(plaintext)
+    elif type(plaintext) == bytes:
+        hexArray = [BitVector(intVal=i, size=8) for i in plaintext]
+    
+
+    requiredPadding = 16 - len(hexArray) % 16
+    if requiredPadding != 0:
+        hexArray += [BitVector(intVal=requiredPadding, size=8)] * requiredPadding
+    else :
+        hexArray += [BitVector(intVal=0, size=8)] * 16
+
+
     # CBC
     randomIV = BitVector(intVal = 0)
     randomIV = randomIV.gen_random_bits(128)
-    IVText = randomIV.get_bitvector_in_ascii()
+    randomIV = [randomIV[i*8:i*8+8] for i in range(len(randomIV)//8)]
     
     # encrypt
-    encryptedText = aes_encrypt_block(IVText)
-    encryptedBlock = encryptedText[:16]
-    for i in range(0, len(plaintext), 16):
-        block = plaintext[i:i+16]
-        block = xor_strings(block, encryptedBlock)
+    encrypted = aes_encrypt_block(randomIV)
+    encryptedBlock = encrypted[:16]
+    for i in range(0, len(hexArray), 16):
+        block = hexArray[i:i+16]
+        block = [block[i] ^ encryptedBlock[i] for i in range(len(block))]
         encryptedBlock = aes_encrypt_block(block)
-        encryptedText += encryptedBlock
+        encrypted += encryptedBlock
 
     encryptionTime = time.time() - start_time
-    return plaintext, encryptedText, encryptionTime, keyScheduleTime
+    return hex2Text(hexArray), encrypted, encryptionTime, keyScheduleTime
+
 
 def aes_decrypt(key, ciphertext, mode=128):
     AES_key_size = mode
-    ciphertext = ciphertext.ljust(math.ceil(len(ciphertext)/16)*16, "\0")
-
-    start_time = time.time()
-    # generate key
     keygen(key)
-    keyScheduleTime = time.time() - start_time
-    
+   
     start_time = time.time()
-    # decrypt
-    decryptedText = ""
+
+    if type(ciphertext) == str:
+        ciphertext = text2Hex(ciphertext)
+
+    elif type(ciphertext) == bytes:
+        ciphertext = [BitVector(intVal=i, size=8) for i in ciphertext]
+
+    # CBC
+    decryptedText = []
     prevBlock = ciphertext[:16]
     for i in range(16, len(ciphertext), 16):
         block = ciphertext[i:i+16]
         decryptedBlock = aes_decrypt_block(block)
-        decryptedText += xor_strings(prevBlock, decryptedBlock)
+        decryptedText += [prevBlock[i] ^ decryptedBlock[i] for i in range(len(prevBlock))]
         prevBlock = block
-    
+
+    # remove padding
+
+    required_padding = int(decryptedText[-1])
+    if required_padding != 0:
+        decryptedText = decryptedText[:-required_padding]
+    else:
+        decryptedText = decryptedText[:-16]
+
     decryptionTime = time.time() - start_time
-    
+
     return decryptedText, decryptionTime
 
-def main():
-    mode = 128
 
-    # take input the key
-    key = input("Enter the key: ")
-    plaintext = input("Enter the plaintext: ")
-    print("")
-
-    # key = "BUET CSE19 Batch"
-    # plaintext = "Never Gonna Give You Up."
+def plainTextOp(key, plaintext, mode):
 
     paddedPlaintext, ciphertext, encyptionTime, keyScheduleTime = aes_encrypt(key, plaintext, mode)
     decryptedText, decryptionTime = aes_decrypt(key, ciphertext, mode)
-
-    start_time = time.time()
-    keygen(key)
-    keyScheduleTime = time.time() - start_time
     
     print("Key:")
     print("In ASCII :", key)
@@ -383,21 +393,95 @@ def main():
 
     print("Ciphered Text:")
     print("In HEX: ", end="")
-    printHexArray(text2Hex(ciphertext))
-    print("In ASCII :", ciphertext)
+    printHexArray(ciphertext)
+    print("In ASCII :", hex2Text(ciphertext))
     print()
 
     print("Deciphered Text:")
     print("In HEX: ", end="")
-    printHexArray(text2Hex(decryptedText))
-    print("In ASCII :", decryptedText)
+    printHexArray(decryptedText)
+    print("In ASCII :", hex2Text(decryptedText))
     print()
+
+    start_time = time.time()
+    keygen(key)
+    keyScheduleTime = time.time() - start_time
+    
 
     print("Execution Time Details:")
     print("Key Schedule Time:", keyScheduleTime*1000, "ms")
     print("Encryption Time:", encyptionTime*1000, "ms")
     print("Decryption Time:", decryptionTime*1000, "ms")
+
+
+def main():
+
+    mode = 128
+    print("AES Encryption and Decryption")
+    print("----------------------------")
+    print("Select Mode:")
+    print("1. 128-bit")
+    print("2. 192-bit")
+    print("3. 256-bit")
+    print("")
+    mode_choice = int(input("Enter your choice: "))
+
+    if mode_choice == 1:
+        mode = 128
+    elif mode_choice == 2:
+        mode = 192
+    elif mode_choice == 3:
+        mode = 256
+
+
+    print("Select : ")
+    print("1. Plain Text example")
+    print("2. File encryption")
+    print("3. File decryption")
+
+    choice = int(input("Enter your choice: "))
+    print("")
+    key = input("Enter the key: ")
+
     
+    if choice == 1:
+        plaintext = input("Enter the plaintext: ")
+        plainTextOp(key, plaintext, mode)
+
+    elif choice == 2:
+        filename = input("Enter the filename: ")
+        # filename = "abcd.txt"
+        plaintext = open(filename, "rb").read()
+
+        paddedPlaintext, ciphertext, encyptionTime, keyScheduleTime = aes_encrypt(key, plaintext, mode)
+        f = open(filename + ".enc", "wb")
+        for i in ciphertext:
+            i.write_to_file(f)
+        f.close()
+        
+        print("Encryption Successful!")
+        print("Encryption Time:", encyptionTime*1000, "ms")
+
+    elif choice == 3:
+        filename = input("Enter the filename: ")
+        # filename = "abcd.txt.enc"
+        ciphertext = open(filename, "rb").read()
+        decryptedText, decryptionTime = aes_decrypt(key, ciphertext, mode)
+
+        outputFile = filename.split(".")
+        outputFileName = outputFile[0] + "_decrypted"
+        
+        if len(outputFile) > 1:
+            outputFileName += "." + outputFile[1]
+
+        f = open(outputFileName, "wb")
+        for i in decryptedText:
+            i.write_to_file(f)
+        f.close()
+
+        print("Decryption Successful!")
+        print("Decryption Time:", decryptionTime*1000, "ms")
+
     
 
 if __name__ == "__main__":

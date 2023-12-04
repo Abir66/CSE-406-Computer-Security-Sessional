@@ -1,7 +1,9 @@
 
 from BitVector import *
+import concurrent.futures
 import math
 import time
+
 Sbox = (
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
     0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
@@ -72,8 +74,6 @@ rc11B = BitVector(intVal=0x11B, size=9)
 for i in range(11):
     rc.append(rc1)
     rc1 = rc1.gf_multiply_modular(rc2, rc11B, 8)
-
-
 
 
 
@@ -250,8 +250,9 @@ def keygen(key):
         word = words[i] + words[i+1] + words[i+2] + words[i+3]
         roundKeys.append(arrayToColumnMatrix(word))
 
-def aes_encrypt_block(plaintext):
-    hexArray = text2Hex(plaintext)
+
+def aes_encrypt_block(hexArray):
+    # hexArray = text2Hex(plaintext)
     state = arrayToColumnMatrix(hexArray)
     
     # intial round
@@ -263,21 +264,20 @@ def aes_encrypt_block(plaintext):
         state = shiftRows(state)
         state = mixColumn(state)
         state = matrixXor(state, roundKeys[i])
-        # printHexMatrix(state)
+
 
     # last round
     state = matrixSubstitute(state)
     state = shiftRows(state)
     state = matrixXor(state, roundKeys[-1])
-    # printHexMatrix(state)
+
     
     encryptedHexArray = columnMatrixToArray(state)
     encryptedText = hex2Text(encryptedHexArray)
-    return encryptedText
+    return encryptedHexArray
 
 def aes_decrypt_block(ciphertext):
-    hexArray = text2Hex(ciphertext)
-    state = arrayToColumnMatrix(hexArray)
+    state = arrayToColumnMatrix(ciphertext)
 
     invRoundKeys = roundKeys[:]
     invRoundKeys.reverse()
@@ -295,110 +295,125 @@ def aes_decrypt_block(ciphertext):
     state = matrixSubstitute(state, InvSbox)
     state = matrixXor(state, invRoundKeys[-1])
 
-        
-    
     decryptedHexArray = columnMatrixToArray(state)
-    decryptedText = hex2Text(decryptedHexArray)
-    return decryptedText
+    return decryptedHexArray
 
-def aes_encrypt(key, plaintext, mode=128):
+def aes_worker(nonce, counter, block):
+    nc = BitVector(intVal=nonce + counter, size=128)
+    nc = [nc[i*8:i*8+8] for i in range(len(nc)//8)]
+    encryptedBlock = aes_encrypt_block(nc)
+    return [block[i] ^ encryptedBlock[i] for i in range(len(block))]
+
+
+
+def aes_encrypt(key, plaintext, filename, mode=128):
+    
     AES_key_size = mode
-    plaintext = plaintext.ljust(math.ceil(len(plaintext)/16)*16, "\0")
-    
-    start_time = time.time()
-    # generate key
     keygen(key)
-    keyScheduleTime = time.time() - start_time
-
-    start_time = time.time()
-    # CBC
-    randomIV = BitVector(intVal = 0)
-    randomIV = randomIV.gen_random_bits(128)
-    IVText = randomIV.get_bitvector_in_ascii()
     
-    # encrypt
-    encryptedText = aes_encrypt_block(IVText)
-    encryptedBlock = encryptedText[:16]
-    for i in range(0, len(plaintext), 16):
-        block = plaintext[i:i+16]
-        block = xor_strings(block, encryptedBlock)
-        encryptedBlock = aes_encrypt_block(block)
-        encryptedText += encryptedBlock
+    start_time = time.time()
+    hexArray = []
+    if type(plaintext) == str:
+        hexArray = text2Hex(plaintext)
+    elif type(plaintext) == bytes:
+        hexArray = [BitVector(intVal=i, size=8) for i in plaintext]
+    
 
-    encryptionTime = time.time() - start_time
-    return plaintext, encryptedText, encryptionTime, keyScheduleTime
+    # CTR
+    nonce = BitVector(intVal = 0)
+    nonce = nonce.gen_random_bits(128)
+    nc = [nonce[i*8:i*8+8] for i in range(len(nonce)//8)]
+    encrypted = aes_encrypt_block(nc)
+    nc = int(nonce)
 
-def aes_decrypt(key, ciphertext, mode=128):
+    filename = filename + ".enc"
+    f = open(filename, "wb")
+    for i in encrypted:
+        i.write_to_file(f)
+
+
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+
+        chunks = math.ceil(len(hexArray) / 16)
+        results = executor.map(aes_worker, [nc] * chunks, range(1, chunks+1), [hexArray[i:i+16] for i in range(0, len(hexArray), 16)])
+
+        for block in results:
+            for i in block:
+                i.write_to_file(f)
+
+    f.close()
+
+    print("Encryption time :", time.time() - start_time)
+    
+
+def aes_decrypt(key, ciphertext, filename, mode=128):
     AES_key_size = mode
-    ciphertext = ciphertext.ljust(math.ceil(len(ciphertext)/16)*16, "\0")
-
-    start_time = time.time()
-    # generate key
     keygen(key)
-    keyScheduleTime = time.time() - start_time
-    
+   
     start_time = time.time()
-    # decrypt
-    decryptedText = ""
-    prevBlock = ciphertext[:16]
-    for i in range(16, len(ciphertext), 16):
-        block = ciphertext[i:i+16]
-        decryptedBlock = aes_decrypt_block(block)
-        decryptedText += xor_strings(prevBlock, decryptedBlock)
-        prevBlock = block
-    
-    decryptionTime = time.time() - start_time
-    
-    return decryptedText, decryptionTime
+
+    if type(ciphertext) == str:
+        ciphertext = text2Hex(ciphertext)
+    elif type(ciphertext) == bytes:
+        ciphertext = [BitVector(intVal=i, size=8) for i in ciphertext]
+
+    #CTR
+    nonce = ciphertext[:16]
+    nonce_decrypted = aes_decrypt_block(nonce)
+    nonce = nonce_decrypted[0]
+    for i in range(1, len(nonce_decrypted)):
+        nonce += nonce_decrypted[i]
+
+    nc = int(nonce)
+
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        chunks = math.ceil(len(ciphertext) / 16)
+        chunks -= 1
+        results = executor.map(aes_worker, [nc] * chunks, range(1, chunks+1), [ciphertext[i:i+16] for i in range(16, len(ciphertext), 16)])
+
+        f = open(filename, "wb")
+        for block in results:
+            for i in block:
+                i.write_to_file(f)
+
+    f.close()
+
+    print(time.time() - start_time)
+
+        
 
 def main():
+
     mode = 128
 
-    # take input the key
-    key = input("Enter the key: ")
-    plaintext = input("Enter the plaintext: ")
-    print("")
+    print("Select : ")
+    print("1. File encryption")
+    print("2. File decryption")
 
+    choice = int(input("Enter your choice: "))
     # key = "BUET CSE19 Batch"
-    # plaintext = "Never Gonna Give You Up."
+    key = input("Enter the key: ")
+    # filename = input("Enter the filename: ")
 
-    paddedPlaintext, ciphertext, encyptionTime, keyScheduleTime = aes_encrypt(key, plaintext, mode)
-    decryptedText, decryptionTime = aes_decrypt(key, ciphertext, mode)
 
-    start_time = time.time()
-    keygen(key)
-    keyScheduleTime = time.time() - start_time
-    
-    print("Key:")
-    print("In ASCII :", key)
-    print("In HEX: ", end="")
-    printHexArray(text2Hex(key))
-    print()
+    if choice == 1:
+        filename = input("Enter the filename: ")
+        plaintext = open(filename, "rb").read()
+        aes_encrypt(key, plaintext, filename, mode)
+        
 
-    print("Plain Text:")
-    print("In ASCII :", paddedPlaintext)
-    print("In HEX: ", end="")
-    printHexArray(text2Hex(paddedPlaintext))
-    print()
+    elif choice == 2:
+        filename = input("Enter the filename: ")
+        outputFile = filename.split(".")
+        outputFileName = outputFile[0] + "_decrypted"
+        
+        if len(outputFile) > 1 and outputFile[1] != "enc":
+            outputFileName += "." + outputFile[1]
 
-    print("Ciphered Text:")
-    print("In HEX: ", end="")
-    printHexArray(text2Hex(ciphertext))
-    print("In ASCII :", ciphertext)
-    print()
+        ciphertext = open(filename, "rb").read()
+        aes_decrypt(key, ciphertext, outputFileName, mode)
 
-    print("Deciphered Text:")
-    print("In HEX: ", end="")
-    printHexArray(text2Hex(decryptedText))
-    print("In ASCII :", decryptedText)
-    print()
 
-    print("Execution Time Details:")
-    print("Key Schedule Time:", keyScheduleTime*1000, "ms")
-    print("Encryption Time:", encyptionTime*1000, "ms")
-    print("Decryption Time:", decryptionTime*1000, "ms")
-    
-    
 
 if __name__ == "__main__":
     main()
