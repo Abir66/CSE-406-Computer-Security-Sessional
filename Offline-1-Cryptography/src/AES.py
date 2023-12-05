@@ -314,10 +314,9 @@ def aes_encrypt(key, plaintext, mode=128):
     # CBC
     randomIV = BitVector(intVal = 0)
     randomIV = randomIV.gen_random_bits(128)
-    IVText = randomIV.get_bitvector_in_ascii()
     
     # encrypt
-    encryptedText = aes_encrypt_block(IVText)
+    encryptedText = randomIV.get_bitvector_in_ascii()
     encryptedBlock = encryptedText[:16]
     for i in range(0, len(plaintext), 16):
         block = plaintext[i:i+16]

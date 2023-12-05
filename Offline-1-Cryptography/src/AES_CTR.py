@@ -323,7 +323,8 @@ def aes_encrypt(key, plaintext, filename, mode=128):
     nonce = BitVector(intVal = 0)
     nonce = nonce.gen_random_bits(128)
     nc = [nonce[i*8:i*8+8] for i in range(len(nonce)//8)]
-    encrypted = aes_encrypt_block(nc)
+    # encrypted = aes_encrypt_block(nc)
+    encrypted = nc
     nc = int(nonce)
 
     filename = filename + ".enc"
@@ -335,7 +336,7 @@ def aes_encrypt(key, plaintext, filename, mode=128):
     with concurrent.futures.ProcessPoolExecutor() as executor:
 
         chunks = math.ceil(len(hexArray) / 16)
-        results = executor.map(aes_worker, [nc] * chunks, range(1, chunks+1), [hexArray[i:i+16] for i in range(0, len(hexArray), 16)])
+        results = executor.map(aes_worker, [nc] * chunks, range(0, chunks), [hexArray[i:i+16] for i in range(0, len(hexArray), 16)])
 
         for block in results:
             for i in block:
@@ -358,18 +359,25 @@ def aes_decrypt(key, ciphertext, filename, mode=128):
         ciphertext = [BitVector(intVal=i, size=8) for i in ciphertext]
 
     #CTR
-    nonce = ciphertext[:16]
-    nonce_decrypted = aes_decrypt_block(nonce)
-    nonce = nonce_decrypted[0]
-    for i in range(1, len(nonce_decrypted)):
-        nonce += nonce_decrypted[i]
+    # nonce = ciphertext[:16]
+    # nonce_decrypted = aes_decrypt_block(nonce)
+    # nonce = nonce_decrypted[0]
+    # for i in range(1, len(nonce_decrypted)):
+    #     nonce += nonce_decrypted[i]
+
+    # nc = int(nonce)
+
+
+    nonce = ciphertext[0]
+    for i in range(1, 16):
+        nonce += ciphertext[i]
 
     nc = int(nonce)
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
         chunks = math.ceil(len(ciphertext) / 16)
         chunks -= 1
-        results = executor.map(aes_worker, [nc] * chunks, range(1, chunks+1), [ciphertext[i:i+16] for i in range(16, len(ciphertext), 16)])
+        results = executor.map(aes_worker, [nc] * chunks, range(0, chunks), [ciphertext[i:i+16] for i in range(16, len(ciphertext), 16)])
 
         f = open(filename, "wb")
         for block in results:

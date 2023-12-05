@@ -298,14 +298,14 @@ def aes_decrypt_block(ciphertext):
     return decryptedHexArray
 
 
-def aes_encrypt(key, plaintext, mode=128):
+def aes_encrypt(key, plaintext, mode=128, returnBytes=False):
     
     AES_key_size = mode
     
     start_time = time.time()
     keygen(key)
     keyScheduleTime = time.time() - start_time
-    
+
     start_time = time.time()
     
     hexArray = []
@@ -325,10 +325,9 @@ def aes_encrypt(key, plaintext, mode=128):
     # CBC
     randomIV = BitVector(intVal = 0)
     randomIV = randomIV.gen_random_bits(128)
-    randomIV = [randomIV[i*8:i*8+8] for i in range(len(randomIV)//8)]
     
     # encrypt
-    encrypted = aes_encrypt_block(randomIV)
+    encrypted = [randomIV[i*8:i*8+8] for i in range(len(randomIV)//8)]
     encryptedBlock = encrypted[:16]
     for i in range(0, len(hexArray), 16):
         block = hexArray[i:i+16]
@@ -337,10 +336,15 @@ def aes_encrypt(key, plaintext, mode=128):
         encrypted += encryptedBlock
 
     encryptionTime = time.time() - start_time
+
+    if returnBytes == False:
+        encrypted = hex2Text(encrypted)
+
     return hex2Text(hexArray), encrypted, encryptionTime, keyScheduleTime
 
 
-def aes_decrypt(key, ciphertext, mode=128):
+def aes_decrypt(key, ciphertext, mode=128, returnBytes=False):
+    
     AES_key_size = mode
     keygen(key)
    
@@ -348,10 +352,10 @@ def aes_decrypt(key, ciphertext, mode=128):
 
     if type(ciphertext) == str:
         ciphertext = text2Hex(ciphertext)
-
-    elif type(ciphertext) == bytes:
+    else:
         ciphertext = [BitVector(intVal=i, size=8) for i in ciphertext]
-
+        
+        
     # CBC
     decryptedText = []
     prevBlock = ciphertext[:16]
@@ -371,7 +375,32 @@ def aes_decrypt(key, ciphertext, mode=128):
 
     decryptionTime = time.time() - start_time
 
+
+    if returnBytes == False:
+        decryptedText = hex2Text(decryptedText)
+
     return decryptedText, decryptionTime
+
+def aes_encrypt_file(key, input_file, output_file, mode=128):
+    plaintext = open(input_file, "rb").read()
+    paddedPlaintext, ciphertext, encyptionTime, keyScheduleTime = aes_encrypt(key, plaintext, mode, True)
+    f = open(output_file, "wb")
+    for i in ciphertext:
+        i.write_to_file(f)
+    f.close()
+
+    return encyptionTime
+
+def aes_decrypt_file(key, input_file, output_file, mode=128):
+    ciphertext = open(input_file, "rb").read()
+    decryptedText, decryptionTime = aes_decrypt(key, ciphertext, mode, True)
+    f = open(output_file, "wb")
+    for i in decryptedText:
+        i.write_to_file(f)
+    f.close()
+
+    return decryptionTime
+
 
 
 def plainTextOp(key, plaintext, mode):
@@ -393,14 +422,15 @@ def plainTextOp(key, plaintext, mode):
 
     print("Ciphered Text:")
     print("In HEX: ", end="")
-    printHexArray(ciphertext)
-    print("In ASCII :", hex2Text(ciphertext))
+    printHexArray(text2Hex(ciphertext))
+    print("In ASCII :", ciphertext)
     print()
 
     print("Deciphered Text:")
     print("In HEX: ", end="")
-    printHexArray(decryptedText)
-    print("In ASCII :", hex2Text(decryptedText))
+    print(type(decryptedText))
+    printHexArray(text2Hex(decryptedText))
+    print("In ASCII :", decryptedText)
     print()
 
     start_time = time.time()
@@ -450,34 +480,21 @@ def main():
 
     elif choice == 2:
         filename = input("Enter the filename: ")
-        # filename = "abcd.txt"
-        plaintext = open(filename, "rb").read()
-
-        paddedPlaintext, ciphertext, encyptionTime, keyScheduleTime = aes_encrypt(key, plaintext, mode)
-        f = open(filename + ".enc", "wb")
-        for i in ciphertext:
-            i.write_to_file(f)
-        f.close()
+        encyptionTime = aes_encrypt_file(key, filename, filename + ".enc")
         
         print("Encryption Successful!")
         print("Encryption Time:", encyptionTime*1000, "ms")
 
     elif choice == 3:
         filename = input("Enter the filename: ")
-        # filename = "abcd.txt.enc"
-        ciphertext = open(filename, "rb").read()
-        decryptedText, decryptionTime = aes_decrypt(key, ciphertext, mode)
 
         outputFile = filename.split(".")
         outputFileName = outputFile[0] + "_decrypted"
         
         if len(outputFile) > 1:
             outputFileName += "." + outputFile[1]
-
-        f = open(outputFileName, "wb")
-        for i in decryptedText:
-            i.write_to_file(f)
-        f.close()
+        
+        decryptionTime = aes_decrypt_file(key, filename, outputFileName)
 
         print("Decryption Successful!")
         print("Decryption Time:", decryptionTime*1000, "ms")
